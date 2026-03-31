@@ -1,7 +1,9 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 export default function BottomNav() {
   const { pathname } = useLocation();
+  const { user } = useAuth();
   const isActive = (p) => pathname === p ? 'active' : '';
 
   return (
@@ -9,6 +11,10 @@ export default function BottomNav() {
       <Link to="/matches" className={isActive('/matches')}>
         <span className="nav-icon">🏏</span>
         Home
+      </Link>
+      <Link to="/my-predictions" className={isActive('/my-predictions')}>
+        <span className="nav-icon">🎯</span>
+        My Bets
       </Link>
       <Link to="/leaderboard" className={isActive('/leaderboard')}>
         <span className="nav-icon">🏆</span>

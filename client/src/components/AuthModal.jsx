@@ -1,10 +1,12 @@
 import { useState, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { X } from 'lucide-react';
 import api from '../services/api';
 
 export default function AuthModal({ onClose }) {
   const { login } = useAuth();
+  const toast = useToast();
   const [step, setStep] = useState('phone');
   const [phone, setPhone] = useState('+91');
   const [otpRef, setOtpRef] = useState('');
@@ -32,6 +34,7 @@ export default function AuthModal({ onClose }) {
       setOtpRef(data.otpRef);
       setDevOtp(data.hint_dev || '');
       setStep('otp');
+      toast.success('OTP sent to ' + normalized);
     } catch (err) { setError(err.message || 'Failed to send OTP'); }
     finally { setLoading(false); }
   };
@@ -51,7 +54,10 @@ export default function AuthModal({ onClose }) {
 
   const verifyOtp = async (otpString) => {
     setLoading(true); setError('');
-    try { await login(otpRef, otpString, 'IN-MH'); }
+    try {
+      await login(otpRef, otpString, 'IN-MH');
+      toast.success('🎉 Welcome to CrikeX! You\'re in!');
+    }
     catch (err) { setError(err.message || 'Invalid OTP'); setOtp(['','','','','','']); otpRefs.current[0]?.focus(); }
     finally { setLoading(false); }
   };

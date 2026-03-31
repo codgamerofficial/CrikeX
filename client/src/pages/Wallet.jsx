@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import api from '../services/api';
 import { Gift, ArrowUpRight, ArrowDownRight, Clock } from 'lucide-react';
 
 export default function WalletPage() {
   const { user, wallet, setShowAuth, refreshWallet } = useAuth();
+  const toast = useToast();
   const navigate = useNavigate();
   const [transactions, setTransactions] = useState([]);
   const [predictions, setPredictions] = useState([]);
@@ -32,9 +34,13 @@ export default function WalletPage() {
     try {
       const data = await api.claimDaily();
       setClaimMsg(`🎉 ${data.message}`);
+      toast.success(`🎁 ${data.message}`);
       refreshWallet();
       api.getTransactions().then(d => setTransactions(d.transactions || []));
-    } catch (err) { setClaimMsg(err.message || 'Already claimed today'); }
+    } catch (err) {
+      setClaimMsg(err.message || 'Already claimed today');
+      toast.warning(err.message || 'Already claimed today');
+    }
     finally { setClaiming(false); }
   };
 
