@@ -1,0 +1,18 @@
+{
+  "name": "crikex",
+  "version": "1.0.0",
+  "description": "CrikeX — India's Smartest Sports Prediction Platform",
+  "private": true,
+  "scripts": {
+    "dev:client": "cd client && npm run dev",
+    "dev:server": "cd server && npm run dev",
+    "dev": "cd server && npm run dev",
+    "build": "cd client && npm install && npm run build",
+    "start": "cd server && node src/index.js",
+    "install:all": "cd client && npm install && cd ../server && npm install",
+    "deploy": "npm run build && npm start"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
