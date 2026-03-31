@@ -31,6 +31,16 @@ export const api = {
   updateMe: (data) => request('/users/me', { method: 'PATCH', body: JSON.stringify(data) }),
   submitKyc: (data) => request('/users/kyc', { method: 'POST', body: JSON.stringify(data) }),
   getKycStatus: () => request('/users/kyc/status'),
+  // Referrals
+  getMyReferral: () => request('/referrals/my'),
+  applyReferral: (code) => request('/referrals/apply', { method: 'POST', body: JSON.stringify({ referralCode: code }) }),
+  // Admin
+  adminDashboard: () => request('/admin/dashboard'),
+  adminUsers: (params = '') => request(`/admin/users${params ? '?' + params : ''}`),
+  adminMatches: () => request('/admin/matches'),
+  adminBlockUser: (id, reason) => request(`/admin/users/${id}/block`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
+  adminMatchStatus: (id, status) => request(`/admin/matches/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  adminSettleMarket: (id, result) => request(`/admin/markets/${id}/settle`, { method: 'POST', body: JSON.stringify({ result }) }),
 };
 
 export default api;

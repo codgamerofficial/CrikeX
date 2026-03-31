@@ -11,6 +11,7 @@ import Leaderboard from './pages/Leaderboard';
 import Profile from './pages/Profile';
 import Referral from './pages/Referral';
 import NotFound from './pages/NotFound';
+import AdminDashboard from './pages/AdminDashboard';
 import { useAuth } from './context/AuthContext';
 
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="/leaderboard" element={<Leaderboard />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/referral" element={<Referral />} />
+            <Route path="/admin" element={<AdminDashboard />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </main>
