@@ -7,10 +7,9 @@
     "dev:client": "cd client && npm run dev",
     "dev:server": "cd server && npm run dev",
     "dev": "cd server && npm run dev",
-    "build": "cd client && npm install && npm run build",
-    "start": "cd server && node src/index.js",
-    "install:all": "cd client && npm install && cd ../server && npm install",
-    "deploy": "npm run build && npm start"
+    "build": "npm install --prefix client && npm run build --prefix client && npm install --prefix server",
+    "start": "node server/src/index.js",
+    "install:all": "npm install --prefix client && npm install --prefix server"
   },
   "engines": {
     "node": ">=18.0.0"

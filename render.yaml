@@ -3,8 +3,9 @@ services:
     name: crikex
     runtime: node
     plan: free
-    buildCommand: cd client && npm install && npm run build && cd ../server && npm install
-    startCommand: cd server && node src/index.js
+    region: oregon
+    buildCommand: npm install --prefix client && npm run build --prefix client && npm install --prefix server
+    startCommand: NODE_ENV=production node server/src/index.js
     envVars:
       - key: NODE_ENV
         value: production
