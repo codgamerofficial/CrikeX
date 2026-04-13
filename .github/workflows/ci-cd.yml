@@ -1,0 +1,316 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, staging ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  NODE_VERSION: '18'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ── LINT & TEST ──
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies (Server)
+      run: |
+        cd server
+        npm ci
+
+    - name: Install dependencies (Client)
+      run: |
+        cd client
+        npm ci
+
+    - name: Lint Server
+      run: |
+        cd server
+        npm run lint --if-present
+      continue-on-error: true
+
+    - name: Lint Client
+      run: |
+        cd client
+        npm run lint --if-present
+      continue-on-error: true
+
+  # ── SECURITY CHECK ──
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy results
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Secret scanning
+      run: |
+        cd server
+        npm audit --production
+
+  # ── BUILD & TEST ──
+  build-server:
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, security]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        cd server
+        npm ci
+
+    - name: Build
+      run: |
+        cd server
+        npm run build --if-present
+
+    - name: Run tests
+      run: |
+        cd server
+        npm test --if-present
+      env:
+        NODE_ENV: test
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./server/coverage/coverage-final.json
+        flags: server
+        fail_ci_if_error: false
+
+  build-client:
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, security]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        cd client
+        npm ci
+
+    - name: Build
+      run: |
+        cd client
+        npm run build
+
+    - name: Test
+      run: |
+        cd client
+        npm test --if-present
+      continue-on-error: true
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: client-build
+        path: client/dist/
+
+  # ── DOCKER BUILD ──
+  build-docker:
+    runs-on: ubuntu-latest
+    needs: [build-server, build-client]
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha
+
+    - name: Build and push Docker image (Server)
+      uses: docker/build-push-action@v4
+      with:
+        context: ./server
+        push: ${{ github.event_name == 'push' }}
+        tags: ${{ steps.meta.outputs.tags }}-server
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Build and push Docker image (Client)
+      uses: docker/build-push-action@v4
+      with:
+        context: ./client
+        push: ${{ github.event_name == 'push' }}
+        tags: ${{ steps.meta.outputs.tags }}-client
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # ── STAGING DEPLOYMENT ──
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: [build-docker]
+    if: github.ref == 'refs/heads/develop'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Deploy to Staging
+      env:
+        DEPLOY_KEY: ${{ secrets.STAGING_DEPLOY_KEY }}
+        DEPLOY_HOST: ${{ secrets.STAGING_DEPLOY_HOST }}
+        DEPLOY_USER: ${{ secrets.STAGING_DEPLOY_USER }}
+      run: |
+        mkdir -p ~/.ssh
+        echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
+        ssh -i ~/.ssh/deploy_key $DEPLOY_USER@$DEPLOY_HOST 'cd /home/crikex/staging && docker-compose pull && docker-compose up -d'
+
+    - name: Health check
+      run: |
+        sleep 30
+        curl -f https://staging-api.crikex.app/health || exit 1
+        curl -f https://staging.crikex.app || exit 1
+
+    - name: Notify Slack
+      if: always()
+      uses: slackapi/slack-github-action@v1
+      with:
+        webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+        payload: |
+          {
+            "text": "Staging deployment ${{ job.status }}",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Staging Deployment ${{ job.status }}*\nBranch: develop\nCommit: ${{ github.sha }}"
+                }
+              }
+            ]
+          }
+
+  # ── PRODUCTION DEPLOYMENT ──
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: [build-docker]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Deploy to Production
+      env:
+        DEPLOY_KEY: ${{ secrets.PROD_DEPLOY_KEY }}
+        DEPLOY_HOST: ${{ secrets.PROD_DEPLOY_HOST }}
+        DEPLOY_USER: ${{ secrets.PROD_DEPLOY_USER }}
+      run: |
+        mkdir -p ~/.ssh
+        echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
+        ssh -i ~/.ssh/deploy_key $DEPLOY_USER@$DEPLOY_HOST 'cd /home/crikex/production && docker-compose pull && docker-compose up -d && docker-compose exec -T api npm run migrate'
+
+    - name: Production health check
+      run: |
+        sleep 60
+        curl -f https://api.crikex.app/health || exit 1
+        curl -f https://crikex.app || exit 1
+
+    - name: Run smoke tests
+      run: |
+        npm run test:smoke
+      env:
+        API_URL: https://api.crikex.app
+
+    - name: Notify Slack
+      if: always()
+      uses: slackapi/slack-github-action@v1
+      with:
+        webhook-url: ${{ secrets.SLACK_WEBHOOK }}
+        payload: |
+          {
+            "text": "🚀 Production deployment ${{ job.status }}",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*🚀 Production Deployment ${{ job.status }}*\nBranch: main\nCommit: ${{ github.sha }}\nVersion: ${{ github.ref_name }}"
+                }
+              }
+            ]
+          }
+
+  # ── PERFORMANCE MONITORING ──
+  performance-test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Run Lighthouse CI
+      uses: treosh/lighthouse-ci-action@v9
+      with:
+        uploadArtifacts: true
+        temporaryPublicStorage: true

@@ -10,7 +10,7 @@ import { globalLimiter } from './middleware/rateLimiter.js';
 import { requestLogger } from './utils/logger.js';
 import logger from './utils/logger.js';
 import { setupWebSocket } from './websocket/handler.js';
-import redis from './services/redis.js';
+
 import authRoutes from './routes/auth.js';
 import matchRoutes from './routes/matches.js';
 import predictionRoutes from './routes/predictions.js';
@@ -19,6 +19,8 @@ import leaderboardRoutes from './routes/leaderboard.js';
 import userRoutes from './routes/users.js';
 import adminRoutes from './routes/admin.js';
 import referralRoutes from './routes/referrals.js';
+import advancedRoutes from './routes/advanced.js';
+import { featureFlagsMiddleware } from './middleware/featureFlags.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,20 +28,28 @@ const isProd = (process.env.NODE_ENV || '').trim() === 'production';
 
 const app = express();
 const httpServer = createServer(app);
+
+// CORS configuration
+const corsOrigin = process.env.CORS_ORIGIN || '*';
+
+// Initialize Socket.IO for real-time updates
 const io = new Server(httpServer, {
   cors: {
-    origin: isProd ? false : '*',
+    origin: isProd ? false : corsOrigin,
     methods: ['GET', 'POST'],
+    credentials: true,
   },
+  transports: ['websocket', 'polling'],
 });
+
+// Setup WebSocket handlers
+setupWebSocket(io);
 
 // Global middleware
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
 }));
-
-const corsOrigin = process.env.CORS_ORIGIN || '*';
 app.use(cors({
   origin: isProd ? false : corsOrigin,
   credentials: true,
@@ -48,6 +58,7 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(requestLogger);
 app.use(globalLimiter);
+app.use(featureFlagsMiddleware);
 
 // ── Serve static client in production ──
 if (isProd) {
@@ -78,6 +89,8 @@ app.use('/api/v1/leaderboard', leaderboardRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/referrals', referralRoutes);
+app.use('/api/v1/analytics', advancedRoutes);
+app.use('/api/v1/contests', advancedRoutes);
 
 // ── SPA fallback for client-side routing (production) ──
 if (isProd) {
@@ -103,8 +116,7 @@ app.use((err, req, res, _next) => {
   });
 });
 
-// WebSocket
-setupWebSocket(io);
+
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
@@ -122,7 +134,7 @@ process.on('unhandledRejection', (reason) => {
 // Start server
 httpServer.listen(PORT, () => {
   logger.info(`🏏 CrikeX API Server v1.0.0 running on http://localhost:${PORT}`);
-  logger.info(`📡 WebSocket ready on ws://localhost:${PORT}`);
+
   logger.info(`🔗 Health: http://localhost:${PORT}/api/health`);
   logger.info(`⚙️  Environment: ${process.env.NODE_ENV || 'development'}`);
   if (isProd) logger.info(`🌐 Client served at http://localhost:${PORT}`);

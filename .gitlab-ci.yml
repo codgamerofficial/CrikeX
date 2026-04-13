@@ -1,0 +1,273 @@
+stages:
+  - lint
+  - test
+  - build
+  - security
+  - deploy-staging
+  - deploy-production
+  - monitor
+
+variables:
+  NODE_VERSION: '18'
+  DOCKER_DRIVER: overlay2
+  REGISTRY: registry.gitlab.com
+  IMAGE_NAME: $CI_PROJECT_PATH
+
+# ── LINT STAGE ──
+lint:server:
+  stage: lint
+  image: node:18-alpine
+  cache:
+    paths:
+      - server/node_modules/
+  script:
+    - cd server
+    - npm ci
+    - npm run lint --if-present || true
+  allow_failure: true
+
+lint:client:
+  stage: lint
+  image: node:18-alpine
+  cache:
+    paths:
+      - client/node_modules/
+  script:
+    - cd client
+    - npm ci
+    - npm run lint --if-present || true
+  allow_failure: true
+
+# ── TEST STAGE ──
+test:server:
+  stage: test
+  image: node:18-alpine
+  services:
+    - postgres:14
+    - redis:7-alpine
+  variables:
+    POSTGRES_DB: crikex_test
+    POSTGRES_USER: test
+    POSTGRES_PASSWORD: test
+  cache:
+    paths:
+      - server/node_modules/
+  script:
+    - cd server
+    - npm ci
+    - npm test -- --coverage
+  coverage: '/Coverage: \d+.\d+%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: server/coverage/cobertura-coverage.xml
+    paths:
+      - server/coverage/
+
+test:client:
+  stage: test
+  image: node:18-alpine
+  cache:
+    paths:
+      - client/node_modules/
+  script:
+    - cd client
+    - npm ci
+    - npm test -- --coverage
+  coverage: '/Coverage: \d+.\d+%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: client/coverage/cobertura-coverage.xml
+    paths:
+      - client/coverage/
+  allow_failure: true
+
+# ── BUILD STAGE ──
+build:server:
+  stage: build
+  image: node:18-alpine
+  cache:
+    paths:
+      - server/node_modules/
+  script:
+    - cd server
+    - npm ci
+    - npm run build --if-present
+  artifacts:
+    paths:
+      - server/dist/
+    expire_in: 1 day
+
+build:client:
+  stage: build
+  image: node:18-alpine
+  cache:
+    paths:
+      - client/node_modules/
+  script:
+    - cd client
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - client/dist/
+    expire_in: 1 day
+
+build:docker:server:
+  stage: build
+  image: docker:20.10.16
+  services:
+    - docker:20.10.16-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $REGISTRY/$IMAGE_NAME:server-$CI_COMMIT_SHA -t $REGISTRY/$IMAGE_NAME:server-latest ./server
+    - docker push $REGISTRY/$IMAGE_NAME:server-$CI_COMMIT_SHA
+    - docker push $REGISTRY/$IMAGE_NAME:server-latest
+  only:
+    - main
+    - develop
+
+build:docker:client:
+  stage: build
+  image: docker:20.10.16
+  services:
+    - docker:20.10.16-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $REGISTRY/$IMAGE_NAME:client-$CI_COMMIT_SHA -t $REGISTRY/$IMAGE_NAME:client-latest ./client
+    - docker push $REGISTRY/$IMAGE_NAME:client-$CI_COMMIT_SHA
+    - docker push $REGISTRY/$IMAGE_NAME:client-latest
+  only:
+    - main
+    - develop
+
+# ── SECURITY STAGE ──
+security:trivy:
+  stage: security
+  image: aquasec/trivy:latest
+  script:
+    - trivy fs --exit-code 0 --severity HIGH,CRITICAL --no-progress .
+  allow_failure: true
+
+security:npm-audit:
+  stage: security
+  image: node:18-alpine
+  cache:
+    paths:
+      - server/node_modules/
+      - client/node_modules/
+  script:
+    - cd server && npm audit --production || true
+    - cd ../client && npm audit --production || true
+  allow_failure: true
+
+security:sast:
+  stage: security
+  image: returntocorp/semgrep:latest
+  script:
+    - semgrep --config=p/security-audit --json --output=sast-report.json .
+  artifacts:
+    reports:
+      sast: sast-report.json
+  allow_failure: true
+
+# ── STAGING DEPLOYMENT ──
+deploy:staging:
+  stage: deploy-staging
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client bash
+    - eval $(ssh-agent -s)
+    - echo "$STAGING_DEPLOY_KEY" | base64 -d | ssh-add -
+    - mkdir -p ~/.ssh
+    - ssh-keyscan -H $STAGING_DEPLOY_HOST >> ~/.ssh/known_hosts
+  script:
+    - ssh -i ~/.ssh/id_rsa $STAGING_DEPLOY_USER@$STAGING_DEPLOY_HOST "
+        cd /home/crikex/staging &&
+        docker-compose pull &&
+        docker-compose up -d &&
+        docker-compose exec -T api npm run migrate
+      "
+  environment:
+    name: staging
+    url: https://staging-api.crikex.app
+  only:
+    - develop
+  when: manual
+
+deploy:staging:health-check:
+  stage: deploy-staging
+  image: curlimages/curl:latest
+  script:
+    - sleep 30
+    - curl -f https://staging-api.crikex.app/health
+    - curl -f https://staging.crikex.app
+  only:
+    - develop
+  when: on_success
+  allow_failure: true
+
+# ── PRODUCTION DEPLOYMENT ──
+deploy:production:
+  stage: deploy-production
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client bash
+    - eval $(ssh-agent -s)
+    - echo "$PROD_DEPLOY_KEY" | base64 -d | ssh-add -
+    - mkdir -p ~/.ssh
+    - ssh-keyscan -H $PROD_DEPLOY_HOST >> ~/.ssh/known_hosts
+  script:
+    - ssh -i ~/.ssh/id_rsa $PROD_DEPLOY_USER@$PROD_DEPLOY_HOST "
+        cd /home/crikex/production &&
+        docker-compose pull &&
+        docker-compose up -d &&
+        docker-compose exec -T api npm run migrate
+      "
+  environment:
+    name: production
+    url: https://api.crikex.app
+    kubernetes:
+      namespace: production
+  only:
+    - main
+  when: manual
+
+deploy:production:health-check:
+  stage: deploy-production
+  image: curlimages/curl:latest
+  script:
+    - sleep 60
+    - curl -f https://api.crikex.app/health
+    - curl -f https://crikex.app
+  only:
+    - main
+  when: on_success
+  allow_failure: true
+
+# ── MONITORING STAGE ──
+monitor:performance:
+  stage: monitor
+  image: node:18-alpine
+  script:
+    - echo "Running performance tests..."
+    - npm run test:performance || true
+  only:
+    - main
+    - develop
+  allow_failure: true
+
+monitor:uptime:
+  stage: monitor
+  image: curlimages/curl:latest
+  script:
+    - curl -X POST https://uptime.monitor/ping -d "service=crikex-api&status=ok"
+  only:
+    - main
+    - develop
+  allow_failure: true
