@@ -86,7 +86,7 @@ export class TwoFactorAuthService {
         success: true,
         message: '2FA successfully enabled',
         backupCodes,
-        backup Message: 'Save these backup codes in a safe place. You can use them to login if you lose access to your authenticator app.',
+        backupMessage: 'Save these backup codes in a safe place. You can use them to login if you lose access to your authenticator app.',
       };
     } catch (error) {
       logger.error('2FA verification failed', { userId, error: error.message });

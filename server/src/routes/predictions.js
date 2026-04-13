@@ -5,7 +5,7 @@ import { geoBlockMiddleware } from '../middleware/geoBlock.js';
 import { PREDICTION_LIMITS } from '../config/constants.js';
 import { getUserBets, placeBet } from '../services/nhostClient.js';
 import { convex } from '../services/convexClient.js';
-import { detectFraud } from '../services/fraudDetection.js';
+import { fraudService } from '../services/fraudDetection.js';
 import logger from '../utils/logger.js';
 
 const router = Router();
@@ -26,27 +26,27 @@ router.post('/', predictionLimiter, geoBlockMiddleware, async (req, res) => {
 
   try {
     // 1. Run fraud detection before placing bet
-    const fraudResult = detectFraud(userId, {
+    const fraudResult = await fraudService.analyzePrediction(userId, {
       type: 'prediction_placement',
       amount: coins,
       timestamp: new Date(),
     });
 
-    logger.debug('Fraud detection result', { userId, action: fraudResult.action });
+    logger.debug('Fraud detection result', { userId, action: fraudResult.decision });
 
-    if (fraudResult.action === 'block') {
+    if (fraudResult.decision === 'block') {
       // Block user account
-      logger.warn('User blocked due to fraud', { userId, reason: fraudResult.reason });
+      logger.warn('User blocked due to fraud', { userId, reason: fraudResult.risks[0]?.type || "fraud_detected" });
       return res.status(403).json({
         error: 'ACCOUNT_BLOCKED',
         message: 'Your account has been restricted due to suspicious activity. Please contact support.',
-        fraudFlag: fraudResult.reason,
+        fraudFlag: fraudResult.risks[0]?.type || "fraud_detected",
       });
     }
 
-    if (fraudResult.action === 'flag_and_limit') {
+    if (fraudResult.decision === 'flag_and_limit') {
       // Reduce max bet for flagged users
-      logger.warn('User flagged for fraud', { userId, reason: fraudResult.reason });
+      logger.warn('User flagged for fraud', { userId, reason: fraudResult.risks[0]?.type || "fraud_detected" });
       if (coins > 1000) {
         return res.status(400).json({
           error: 'BET_AMOUNT_REDUCED',
@@ -56,9 +56,9 @@ router.post('/', predictionLimiter, geoBlockMiddleware, async (req, res) => {
       }
     }
 
-    if (fraudResult.action === 'flag') {
+    if (fraudResult.decision === 'flag') {
       // Log for review but allow
-      logger.info('User flagged for review', { userId, reason: fraudResult.reason });
+      logger.info('User flagged for review', { userId, reason: fraudResult.risks[0]?.type || "fraud_detected" });
     }
 
     // 2. Register bet in Convex (reserves stake, recalculates odds)

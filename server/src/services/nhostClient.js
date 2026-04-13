@@ -2,15 +2,15 @@
  * Nhost Client — PostgreSQL + GraphQL data layer
  * Handles: Wallet, Bets, Transactions, Leaderboard
  */
-import { NhostClient } from '@nhost/nhost-js';
 import { GraphQLClient, gql } from 'graphql-request';
 
-// ── Nhost SDK initialization ──
-const nhost = new NhostClient({
-  subdomain: process.env.NHOST_SUBDOMAIN,
-  region: process.env.NHOST_REGION || 'ap-south-1',
-  adminSecret: process.env.NHOST_ADMIN_SECRET,
-});
+// ── Mock Nhost client for development ──
+const nhost = {
+  auth: {
+    getAccessToken: () => null,
+    getUser: () => null,
+  },
+};
 
 // ── Direct GraphQL client with admin secret ──
 const graphql = new GraphQLClient(

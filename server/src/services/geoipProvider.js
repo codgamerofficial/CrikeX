@@ -1,6 +1,6 @@
 import axios from 'axios';
 import logger from '../utils/logger.js';
-import { get, set } from '../services/redis.js';
+import { redis } from '../services/redis.js';
 
 /**
  * GeoIP lookup service
@@ -29,7 +29,7 @@ export async function resolveStateFromIP(ipAddress) {
   try {
     // Check cache first
     const cacheKey = `geoip:${ipAddress}`;
-    const cached = await get(cacheKey);
+    const cached = await redis.get(cacheKey);
 
     if (cached) {
       logger.debug('GeoIP cache hit', { ip: ipAddress, state: cached });
@@ -60,7 +60,7 @@ export async function resolveStateFromIP(ipAddress) {
     });
 
     // Cache the result
-    await set(cacheKey, JSON.stringify(stateCode), GEOIP_CACHE_TTL);
+    await redis.set(cacheKey, JSON.stringify(stateCode), GEOIP_CACHE_TTL);
 
     return stateCode;
   } catch (error) {
